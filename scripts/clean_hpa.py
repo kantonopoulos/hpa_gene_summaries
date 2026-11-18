@@ -11,7 +11,9 @@ Rules
   4. Drop "Prognostic summary".
   5. Drop "Detected in blood by immunoassay" / "... by mass spectrometry" /
      "Proximity extension assay" / "SomaScan".
-  6. Drop "Brain specificity" when its value is "Low human brain regional specificity".
+  6. Drop "Brain specificity" when its value is a "low specificity" call
+     ("Low human brain regional specificity" in v25, "Low domain specificity" in v26).
+     Drop "Isoform expression category" and "Evolutionary conservation category" (v26).
   7. Fold per-entity expression values into "Tissue specificity" (nTPM, from
      "RNA tissue specific nTPM") and "Single cell type specificity" (nCPM, from
      "RNA single cell type specific nCPM"):
@@ -21,6 +23,8 @@ Rules
      Supported/Enhanced -> "Highly consistent", Approved -> "Moderately
      consistent", Uncertain -> "Uncertain".
   9. "Gene name": drop the trailing "(synonym, synonym)" list.
+ 10. "Protein interactions": drop the v26 source suffix ("... according to consensus",
+     "... according to aggregated data from 1 databases").
 
 Usage:
     python scripts/clean_hpa.py ENSG00000146648
@@ -42,12 +46,17 @@ DROP_EXACT = {
     "Detected in blood by mass spectrometry",
     "Proximity extension assay",
     "SomaScan",
+    "Isoform expression category",
+    "Evolutionary conservation category",
 }
+
+LOW_BRAIN = {"Low human brain regional specificity", "Low domain specificity"}
 
 # key in summary_page -> (structured_json field with the per-entity values, unit label)
 ENTITY_VALUES = {
     "Tissue specificity": ("RNA tissue specific nTPM", "nTPM"),
     "Single cell type specificity": ("RNA single cell type specific nCPM", "nCPM"),
+    "Brain specificity": ("RNA brain domain specific nTPM", "nTPM"),
 }
 
 
@@ -97,7 +106,7 @@ def clean(payload: dict) -> "OrderedDict":
                 continue
             if key in DROP_EXACT:
                 continue
-            if key == "Brain specificity" and value == "Low human brain regional specificity":
+            if key == "Brain specificity" and value in LOW_BRAIN:
                 continue
 
             if key == "Gene name":
@@ -105,6 +114,8 @@ def clean(payload: dict) -> "OrderedDict":
             elif key in ENTITY_VALUES:
                 field, unit = ENTITY_VALUES[key]
                 value = annotate_entities(value, sj.get(field), unit)
+            elif key == "Protein interactions":
+                value = re.sub(r"\s+according to\b.*$", "", value).strip()
             elif key == "Subcellular location":
                 value = clean_subcellular(value, reliability_if)
 

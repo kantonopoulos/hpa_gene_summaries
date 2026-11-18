@@ -4,12 +4,13 @@
 Uses Gemini 3 Pro Image ("Nano Banana Pro") via Vertex AI (see
 scripts/docs/setup_gemini_vertex_ai.md). The full summary Markdown is handed to the
 model together with a fixed style-guide prompt; the model draws a 16:9 infographic
-from it directly (no layout logic here — that's the model's job). One shot, no
-validation or retry — whatever the model returns is kept.
+from it directly (no layout logic here — that's the model's job). One shot here; the
+check-and-retry rounds are in check_image.py and docs/batch_pipeline.md.
 
 Usage
   python scripts/visualize_gene.py output/ENSG00000254647_summary.md
   python scripts/visualize_gene.py output/ENSG00000254647_summary.md --outdir output
+  python scripts/visualize_gene.py output/ENSG00000254647_summary.md --style lineart
 """
 from __future__ import annotations
 
@@ -39,39 +40,77 @@ def get_client() -> genai.Client:
     return _client
 
 
-STYLE_GUIDE = """STYLE GUIDE (obey exactly):
-- Header: Render the TITLE text as a bold, left-aligned title (plain designed typography —
-  never a literal '#' character or any markdown punctuation) with an engaging narrative
-  subtitle based on its role.
-- Fluid Layout & Composition: Avoid rigid column grids or stiff boxes. Arrange content
-  organically around a prominent central biological focal point tailored to the protein
-  (e.g., a detailed organ or cell membrane). Connect dynamic text nodes using fluid
-  biological visual streams (such as blood vessels, signaling paths, or cellular channels)
-  that naturally guide the viewer's eyes.
-- Organic Scaling: Integrate multi-scale illustrations directly into the artwork—seamlessly
-  zooming from organ scale to cell type down to subcellular scale (e.g. organelles, vesicles,
-  receptors as simple stylized icons — not literal molecular diagrams).
-- Adaptive Color Palette: Pick hues that capture the feeling of THIS protein's own role, drawn
-  from the full spectrum, not just red or blue — e.g. violet/gold for immune, green/amber for
-  metabolic, indigo/lilac for neural, teal/coral for sensory, slate/cyan for structural. Let
-  the specific biology decide, never a generic default.
-- Typography & Details: High-contrast sans-serif font. Keep text brief and integrated
-  naturally alongside vector illustrations using clean badge tags and callout lines rather
-  than blocky text boxes."""
+# Two image styles. "rich" is the default; "lineart" is the fallback for genes whose
+# rich image still fails the image check after two attempts (see docs/batch_pipeline.md).
+RICH_STYLE = """STYLE:
+- Title: the TITLE in bold, left-aligned, with a short subtitle on the protein's role.
+- Layout: one central illustration of a single thing: the organ, tissue or cell where this
+  protein matters most, or the protein itself in its setting (e.g. a receptor in a
+  membrane, or a signalling protein), drawn as a simple schematic shape. The sections sit
+  around it as separate labelled zones, each with its own small drawing if useful. Don't
+  connect the sections with vessels, streams or pathways; use thin callout lines only where
+  they point at something in a drawing.
+- Look: rich, polished scientific illustration with soft shading and depth, in a colour
+  palette chosen to suit this protein's role, on a clean off-white background (hex F8F9FA)
+  with at most a subtle glow behind the central illustration.
+- Text: short, in a clean, high-contrast sans-serif font."""
 
-NEGATIVE_CONSTRAINTS = """HARD CONSTRAINTS (do not violate; the first three are the most important):
-- No duplicated information: each fact and section label appears exactly once in the image —
-  never repeat the same fact, callout, or icon in two places. If a gene has few facts, that is
-  fine — leave the composition sparse rather than padding it with repeats.
-- No misspelled or garbled text: every rendered word must be spelled correctly.
-- The page background is ALWAYS a clean off-white (hex F8F9FA), with subtle glows/shadows on
-  top of it — never a colored, dark, or full-bleed background of any other color.
-- No chemical structure diagrams of any kind (no skeletal/hexagon sugar-ring formulas, no
-  amino acid chains, no protein ribbon diagrams or crystal-structure renderings).
-- No charts, graphs, bar plots, line plots, or any data-visualization widgets.
-- No literal markdown or typographic marker characters anywhere in the image: never draw
-  '#', '##', '-', '*', or similar symbols as glyphs — text is rendered as clean typography
-  only."""
+RICH_RULES = """RULES:
+- Spell every word correctly, and show each fact and heading only once.
+- Draw organs and cells correctly and separately; never merge them into one structure or
+  place one inside another.
+- Never draw 3D protein structures (ribbon or surface models) or chemical structures and
+  formulas. No real data plots and no paper or document icons.
+- No markdown symbols such as #, - or * in the image."""
+
+LINEART_STYLE = """STYLE:
+- Title: the TITLE in bold, left-aligned, with a short subtitle on the protein's role.
+- Layout: one central illustration of a single thing (one organ, one cell, or the protein in
+  its setting drawn as a simple schematic shape). The sections sit around it as separate labelled
+  zones, each with its own small drawing if useful. Use thin callout lines only where they point at something in a drawing.
+- Look: flat 2D scientific line art. Thin, even charcoal outlines and flat fills in 3-4 soft,
+  muted colours picked to suit this protein, so different genes get different palettes (e.g.
+  sage, slate blue, sand, dusty rose, lavender, terracotta, ochre, teal, plum) on a plain
+  off-white background (hex F8F9FA). No gradients, glows, shadows or 3D.
+- Text: short, in a clean dark sans-serif font."""
+
+LINEART_RULES = """RULES:
+- Spell every word correctly, and show each fact and heading only once.
+- Draw organs and cells correctly and separately; never merge them into one structure.
+- Never draw protein structures (ribbon or surface models) or chemical structures and
+  formulas, not even as small icons. No real data plots and no paper or document icons.
+- No markdown symbols such as #, - or * in the image."""
+
+# "simple" is the last fallback (round 4): a plainer drawing, so the model's effort goes
+# into following the rules.
+SIMPLE_STYLE = """STYLE:
+- Title: the TITLE in bold, left-aligned, with a short subtitle.
+- Layout: one simple central drawing (one organ, one cell, or the protein as a simple
+  shape in its setting). Each section sits in its own labelled zone around it.
+- Look: flat 2D line art with thin charcoal outlines and 3-4 soft colours on a plain
+  off-white background (hex F8F9FA). Use few small icons, or none.
+- Text: short, in a clean dark sans-serif font."""
+
+SIMPLE_RULES = """RULES (most important):
+- Copy every word exactly as given, spelled correctly. Show each fact and heading once.
+- No chemical structures, formulas or molecules, and no protein structures (ribbons or
+  surfaces), not even as small icons.
+- No paper, document or clipboard icons, and no charts or plots.
+- Draw anatomy correctly: each organ or cell on its own, in the right place, never merged.
+- No markdown symbols such as #, - or * in the image."""
+
+STYLES = {"rich": (RICH_STYLE, RICH_RULES), "lineart": (LINEART_STYLE, LINEART_RULES),
+          "simple": (SIMPLE_STYLE, SIMPLE_RULES)}
+DEFAULT_STYLE = "rich"
+
+_NUM = r"\d+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten"
+
+
+def rna_transcripts(text: str) -> str:
+    """'6 transcripts' -> '6 RNA transcripts' (and 'Transcript count of 6' likewise), so the
+    image model reads them as RNA molecules rather than documents."""
+    text = re.sub(r"\bTranscript count of (\d+)", lambda m: f"{m[1]} RNA transcript" + ("" if m[1] == "1" else "s"), text)
+    return re.sub(rf"\b({_NUM}) (transcripts?)\b", r"\1 RNA \2", text)
 
 
 def strip_markdown(summary_md: str) -> str:
@@ -90,8 +129,9 @@ def strip_markdown(summary_md: str) -> str:
     return "\n".join(lines)
 
 
-def build_prompt(summary_md: str) -> str:
-    structured = strip_markdown(summary_md)
+def build_prompt(summary_md: str, style: str = DEFAULT_STYLE) -> str:
+    style_guide, rules = STYLES[style]
+    structured = rna_transcripts(strip_markdown(summary_md))
     return (
         f"Create a single infographic image ({ASPECT_RATIO} aspect ratio) summarizing this gene, "
         "using ONLY the facts below. Do not invent facts not present here. The labels "
@@ -99,8 +139,8 @@ def build_prompt(summary_md: str) -> str:
         "content as clean designed typography, never the label word itself. Give every "
         "SECTION LABEL its own clearly labelled zone in the artwork — do not skip or "
         "merge sections.\n\n"
-        f"{STYLE_GUIDE}\n\n"
-        f"{NEGATIVE_CONSTRAINTS}\n\n"
+        f"{style_guide}\n\n"
+        f"{rules}\n\n"
         f"GENE SUMMARY:\n{structured}"
     )
 
@@ -144,13 +184,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("summary_md", help="path to <ID>_summary.md")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--outdir", default=None)
+    ap.add_argument("--style", default=DEFAULT_STYLE, choices=sorted(STYLES))
     args = ap.parse_args(argv)
 
     path = Path(args.summary_md)
     summary_md = path.read_text(encoding="utf-8")
     ensembl_id = path.name.split("_")[0]
 
-    prompt = build_prompt(summary_md)
+    prompt = build_prompt(summary_md, args.style)
     print("call  gemini-3-pro-image ...", flush=True)
     image_bytes = call_gemini_image(args.model, prompt)
 

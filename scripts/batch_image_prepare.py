@@ -12,6 +12,8 @@ Usage
   python scripts/batch_image_prepare.py --load          # build + load into BigQuery (image_in)
   python scripts/batch_image_prepare.py --only-keys data/batch/image_failures.txt \\
       --out data/batch/image_retry.jsonl --load --table image_retry_in   # retry batch
+  python scripts/batch_image_prepare.py --only-keys data/batch/round2_flagged.txt \\
+      --style lineart --out data/batch/image_r3.jsonl --load --table image_r3_in
 """
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bq  # noqa: E402
-from visualize_gene import batch_request_image, build_prompt  # noqa: E402
+from visualize_gene import DEFAULT_STYLE, STYLES, batch_request_image, build_prompt  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,6 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--only-keys", metavar="FILE", help="only these gene ids (one per line)")
     ap.add_argument("--load", action="store_true", help="also load the JSONL into BigQuery")
     ap.add_argument("--table", default="image_in")
+    ap.add_argument("--style", default=DEFAULT_STYLE, choices=sorted(STYLES),
+                    help="image style: rich (rounds 1-2) or lineart (fallback round)")
     args = ap.parse_args(argv)
 
     files = sorted(Path(args.summary_dir).glob("ENSG*_summary.md"))
@@ -47,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         for p in files:
             row = {
                 "key": p.name.split("_")[0],
-                "request": batch_request_image(build_prompt(p.read_text(encoding="utf-8"))),
+                "request": batch_request_image(build_prompt(p.read_text(encoding="utf-8"), args.style)),
             }
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
     print(f"wrote {out}: {len(files)} requests ({out.stat().st_size / 1e6:.1f} MB)")

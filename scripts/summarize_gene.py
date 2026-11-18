@@ -99,6 +99,7 @@ def sec_identity(c: dict) -> tuple[dict, str]:
         "Gene summary (Entrez)": fn.get("Gene summary (Entrez)"),
         "Molecular function (UniProt)": fn.get("Molecular function (UniProt)"),
         "Biological process (UniProt)": fn.get("Biological process (UniProt)"),
+        "Metabolic subsystems": info.get("Metabolic subsystems"),
         "Ligand (UniProt)": fn.get("Ligand (UniProt)"),
     }
     instr = (
@@ -116,7 +117,8 @@ def sec_identity(c: dict) -> tuple[dict, str]:
         "'Gene summary (Entrez)'; only if at least one of those is present; "
         "(4) the 'Molecular function (UniProt)' keywords, verbatim as a comma-separated list, "
         "nothing else in this bullet; only if present; "
-        "(5) the 'Biological process (UniProt)' keywords, only if that field is non-empty; "
+        "(5) the 'Biological process (UniProt)' keywords, and the 'Metabolic subsystems' "
+        "count if present, only if either field is non-empty; "
         "(6) the 'Ligand (UniProt)' keywords verbatim (they already read like 'ATP-binding, "
         "Nucleotide-binding' — do not add the word 'Binds') and the transcript count, only if "
         "either field is present; "
@@ -245,7 +247,9 @@ def sec_disease(c: dict) -> tuple[dict, str]:
     pclass = info.get("Protein class") or ""
     data = {
         "Named diseases / phenotypes (Entrez)": fn.get("Gene summary (Entrez)"),
-        "Cancer specificity": cancer.get("Cancer specificity"),
+        # v26 splits cancer specificity into RNA and protein; v25 had one field (RNA)
+        "Cancer specificity (RNA)": cancer.get("Cancer specificity (RNA)") or cancer.get("Cancer specificity"),
+        "Cancer specificity (Protein)": cancer.get("Cancer specificity (Protein)"),
         "Cell line specificity": cancer.get("Cell line specificity"),
         "Upregulated in disease": blood.get("Upregulated in disease"),
         "Disease prediction models": blood.get("Disease prediction model"),
@@ -260,7 +264,8 @@ def sec_disease(c: dict) -> tuple[dict, str]:
         "the gene or protein name, never join two facts with a dash or semicolon. "
         "Bullets: (1) named diseases and phenotypes taken ONLY from the 'Named diseases / "
         "phenotypes (Entrez)' text — do not add diseases from your own knowledge; "
-        "(2) cancer relevance from 'Cancer specificity' and 'Cell line specificity'; "
+        "(2) cancer relevance from the cancer specificity fields (RNA, protein) and "
+        "'Cell line specificity'; "
         "(3) if 'Upregulated in disease' names diseases, ONE bullet listing at most four of "
         "them followed by 'and others' if there are more — no confidence wording in this bullet; "
         "(4) if 'blood_signal_assessment' is not null, a SEPARATE short bullet stating that "
@@ -365,6 +370,8 @@ KNOWN_PREFIXES = (
     "Biological process", "Protein function", "Gene summary", "Protein class",
     "Tissue specificity", "Single cell type specificity", "Tissue cell type classification",
     "Extracellular location", "Secretome annotation", "Protein level",
+    "Cancer specificity (RNA)", "Cancer specificity (Protein)", "Metabolic subsystems",
+    "Bulk RNA deconvolution classification",
 )
 
 

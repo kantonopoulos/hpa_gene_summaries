@@ -120,7 +120,10 @@ def check_summary(summary_json: Path, clean_json: Path) -> list[str]:
                 parts = [p for p in re.split(r"[ /-]", phrase) if p]
                 if all(p.lower() in STOP or p.isdigit() for p in parts):
                     continue
-                if not in_hay(phrase, hay):
+                # a sentence-initial verb is capitalised too ("Displays Low cancer
+                # specificity"), so also accept the phrase without its first word
+                rest = " ".join(parts[1:])
+                if not in_hay(phrase, hay) and not (rest and in_hay(rest, hay)):
                     miss.add(phrase)
             for tok in re.findall(r"[A-Za-z][A-Za-z0-9-]{3,}", b):
                 low = tok.lower()
